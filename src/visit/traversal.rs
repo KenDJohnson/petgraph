@@ -1,4 +1,4 @@
-use super::{GraphRef, IntoNodeIdentifiers, Reversed};
+use super::{GraphRef, IntoNodeIdentifiers, Reversed, IntoEdges, EdgeRef};
 use super::{IntoNeighbors, IntoNeighborsDirected, VisitMap, Visitable};
 use crate::Incoming;
 use std::collections::VecDeque;
@@ -118,6 +118,97 @@ where
         }
         None
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct DfsOrdered<N, VM> {
+    /// The stack of nodes to visit
+    pub stack: VecDeque<N>,
+    /// The map of discovered nodes
+    pub discovered: VM,
+}
+
+impl<N, VM> Default for DfsOrdered<N, VM>
+where
+    VM: Default,
+{
+    fn default() -> Self {
+        DfsOrdered {
+            stack: VecDeque::new(),
+            discovered: VM::default(),
+        }
+    }
+}
+
+impl<N, VM> DfsOrdered<N, VM>
+where
+    N: Copy + PartialEq,
+    VM: VisitMap<N>,
+{
+    /// Create a new **Dfs**, using the graph's visitor map, and put **start**
+    /// in the stack of nodes to visit.
+    pub fn new<G>(graph: G, start: N) -> Self
+    where
+        G: GraphRef + Visitable<NodeId = N, Map = VM> + IntoEdges,
+    {
+        let mut dfs = DfsOrdered::empty(graph);
+        dfs.move_to(start);
+        dfs
+    }
+
+    /// Create a `Dfs` from a vector and a visit map
+    pub fn from_parts(stack: VecDeque<N>, discovered: VM) -> Self {
+        DfsOrdered { stack, discovered }
+    }
+
+    /// Clear the visit state
+    pub fn reset<G>(&mut self, graph: G)
+    where
+        G: GraphRef + Visitable<NodeId = N, Map = VM> + IntoEdges,
+    {
+        graph.reset_map(&mut self.discovered);
+        self.stack.clear();
+    }
+
+    /// Create a new **Dfs** using the graph's visitor map, and no stack.
+    pub fn empty<G>(graph: G) -> Self
+    where
+        G: GraphRef + Visitable<NodeId = N, Map = VM> + IntoEdges,
+    {
+        DfsOrdered {
+            stack: VecDeque::new(),
+            discovered: graph.visit_map(),
+        }
+    }
+
+    /// Keep the discovered map, but clear the visit stack and restart
+    /// the dfs from a particular node.
+    pub fn move_to(&mut self, start: N) {
+        self.stack.clear();
+        self.stack.push_front(start);
+    }
+
+    /// Return the next node in the dfs, or **None** if the traversal is done.
+    pub fn next<E, G>(&mut self, graph: G) -> Option<N>
+    where
+        E: Ord,
+        G: IntoEdges<NodeId = N, EdgeWeight = E>,
+    {
+        while let Some(node) = self.stack.pop_front() {
+            if self.discovered.visit(node) {
+                let mut edges = graph.edges(node).collect::<Vec<_>>();
+                edges.sort_unstable_by(|edge1, edge2| edge1.weight().cmp(edge2.weight()));
+                for edge in edges {
+                    if !self.discovered.is_visited(&edge.target()) {
+                        self.stack.push_back(edge.target());
+                    }
+                }
+                return Some(node);
+            }
+        }
+        None
+    }
+
 }
 
 /// Visit nodes in a depth-first-search (DFS) emitting nodes in postorder
